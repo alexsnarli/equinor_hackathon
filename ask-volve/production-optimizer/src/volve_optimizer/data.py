@@ -34,6 +34,9 @@ STATE_FEATURES = [
     "previous_whp",
     "previous_downhole_pressure",
     "previous_wht",
+    "previous_system_mean_whp",
+    "previous_system_max_whp",
+    "previous_system_active_wells",
     "rest_days_before",
     "run_days_before",
     "days_since_first_record",
@@ -148,9 +151,36 @@ def _configuration_by_date(daily: pd.DataFrame) -> pd.DataFrame:
     return configuration.reset_index()
 
 
+def _system_state_by_date(daily: pd.DataFrame) -> pd.DataFrame:
+    active = daily[daily["is_active"]].copy()
+    return (
+        active.groupby("DATEPRD")
+        .agg(
+            system_mean_whp=("AVG_WHP_P", "mean"),
+            system_max_whp=("AVG_WHP_P", "max"),
+            system_active_wells=("app_well", "nunique"),
+        )
+        .sort_index()
+        .reset_index()
+    )
+
+
 def build_model_frame(daily: pd.DataFrame) -> pd.DataFrame:
     """Build active-day examples using only state available before each target day."""
     configuration = _configuration_by_date(daily)
+    previous_system_state = _system_state_by_date(daily)
+    previous_system_state[
+        ["system_mean_whp", "system_max_whp", "system_active_wells"]
+    ] = previous_system_state[
+        ["system_mean_whp", "system_max_whp", "system_active_wells"]
+    ].shift(1)
+    previous_system_state = previous_system_state.rename(
+        columns={
+            "system_mean_whp": "previous_system_mean_whp",
+            "system_max_whp": "previous_system_max_whp",
+            "system_active_wells": "previous_system_active_wells",
+        }
+    )
     first_global_date = daily["DATEPRD"].min()
     parts: list[pd.DataFrame] = []
 
@@ -186,6 +216,7 @@ def build_model_frame(daily: pd.DataFrame) -> pd.DataFrame:
             part[f"well_{candidate_label}"] = float(candidate_label == label)
 
         part = part.merge(configuration, on="DATEPRD", how="left")
+        part = part.merge(previous_system_state, on="DATEPRD", how="left")
         part["target_oil"] = part["oil_rate_24h"]
         part["target_gas"] = part["gas_rate_24h"]
         part["target_water"] = part["water_rate_24h"]
@@ -218,6 +249,23 @@ def historical_actions(daily: pd.DataFrame, as_of_date: pd.Timestamp) -> dict[st
     return actions
 
 
+def historical_production(
+    daily: pd.DataFrame, production_date: pd.Timestamp
+) -> dict[str, float]:
+    """Return the measured platform production recorded for one calendar day."""
+    production_date = pd.Timestamp(production_date).normalize()
+    rows = daily[daily["DATEPRD"].eq(production_date)]
+    oil = float(rows["BORE_OIL_VOL"].fillna(0).sum())
+    gas = float(rows["BORE_GAS_VOL"].fillna(0).sum())
+    water = float(rows["BORE_WAT_VOL"].fillna(0).sum())
+    return {
+        "oil": oil,
+        "gas": gas,
+        "water": water,
+        "liquid": oil + water,
+    }
+
+
 def _last_numeric(history: pd.DataFrame, column: str) -> float:
     values = pd.to_numeric(history[column], errors="coerce").dropna()
     return float(values.iloc[-1]) if not values.empty else np.nan
@@ -248,6 +296,9 @@ def state_feature_template(
             break
 
     recent = history.tail(7)
+    system_history = _system_state_by_date(daily)
+    system_history = system_history[system_history["DATEPRD"].le(as_of_date)]
+    latest_system = system_history.iloc[-1] if not system_history.empty else None
     target_date = as_of_date + pd.Timedelta(days=1)
     day_of_year = target_date.dayofyear
     template: dict[str, Any] = {
@@ -261,6 +312,17 @@ def state_feature_template(
         "previous_whp": _last_numeric(history, "AVG_WHP_P"),
         "previous_downhole_pressure": _last_numeric(history, "AVG_DOWNHOLE_PRESSURE"),
         "previous_wht": _last_numeric(history, "AVG_WHT_P"),
+        "previous_system_mean_whp": (
+            float(latest_system["system_mean_whp"]) if latest_system is not None else np.nan
+        ),
+        "previous_system_max_whp": (
+            float(latest_system["system_max_whp"]) if latest_system is not None else np.nan
+        ),
+        "previous_system_active_wells": (
+            float(latest_system["system_active_wells"])
+            if latest_system is not None
+            else np.nan
+        ),
         "rest_days_before": float(rest_days),
         "run_days_before": float(run_days),
         "days_since_first_record": float((target_date - history["DATEPRD"].min()).days),

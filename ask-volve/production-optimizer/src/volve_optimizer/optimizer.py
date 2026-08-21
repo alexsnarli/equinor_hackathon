@@ -10,6 +10,7 @@ from .data import (
     FEATURE_COLUMNS,
     PRODUCERS,
     apply_actions_to_template,
+    historical_actions,
     state_feature_template,
 )
 from .model import ModelBundle, predict
@@ -129,6 +130,73 @@ def _is_feasible(row: pd.Series, constraints: dict[str, float | None]) -> bool:
     return bool(all(checks))
 
 
+def _select_with_oil_tolerance(
+    candidates: pd.DataFrame, oil_tolerance: float = 0.01
+) -> pd.Series | None:
+    if candidates.empty:
+        return None
+    maximum_oil = float(candidates["oil"].max())
+    oil_tier = candidates[candidates["oil"].ge(maximum_oil * (1 - oil_tolerance))]
+    return oil_tier.sort_values(["gas", "oil"], ascending=[False, False]).iloc[0]
+
+
+def _pressure_percentile(values: pd.Series, current: float) -> float | None:
+    numeric = pd.to_numeric(values, errors="coerce").dropna()
+    if numeric.empty or pd.isna(current):
+        return None
+    return float(numeric.le(current).mean())
+
+
+def _rest_candidate(
+    daily: pd.DataFrame, as_of_date: pd.Timestamp
+) -> tuple[str | None, int, float]:
+    actions = historical_actions(daily, as_of_date)
+    candidates: list[tuple[float, str, int, float]] = []
+    for label, well in PRODUCERS.items():
+        if not actions[label]["on"]:
+            continue
+        template = state_feature_template(daily, as_of_date, label)
+        if template is None:
+            continue
+        history = daily[
+            daily["NPD_WELL_BORE_NAME"].eq(well)
+            & daily["DATEPRD"].le(pd.Timestamp(as_of_date).normalize())
+            & daily["is_active"]
+        ]
+        percentiles = [
+            percentile
+            for percentile in (
+                _pressure_percentile(
+                    history["AVG_DOWNHOLE_PRESSURE"],
+                    float(template["previous_downhole_pressure"]),
+                ),
+                _pressure_percentile(
+                    history["AVG_WHP_P"], float(template["previous_whp"])
+                ),
+            )
+            if percentile is not None
+        ]
+        relative_pressure = float(np.mean(percentiles)) if percentiles else 0.5
+        run_days = int(template["run_days_before"])
+        depletion = 1 - relative_pressure
+        run_stress = min(run_days / 90, 1)
+        score = 0.75 * depletion + 0.25 * run_stress
+        candidates.append((score, label, run_days, relative_pressure))
+    if not candidates:
+        return None, 0, 0.5
+    score, label, run_days, relative_pressure = max(candidates)
+    return label, run_days, relative_pressure
+
+
+def _uses_moderate_chokes(actions: dict[str, dict[str, Any]], support: pd.DataFrame) -> bool:
+    return all(
+        not action["on"]
+        or label not in support.index
+        or float(action["choke"]) <= float(support.loc[label, "median"]) + 0.1
+        for label, action in actions.items()
+    )
+
+
 def optimize_scenarios(
     bundle: ModelBundle,
     daily: pd.DataFrame,
@@ -200,41 +268,48 @@ def optimize_scenarios(
         ]
     )
     feasible = summary[summary["feasible"] & summary["oil"].gt(0)]
-    ranked = feasible.sort_values(
-        ["oil", "gas", "water"], ascending=[False, False, True]
-    )
+    if feasible.empty:
+        return feasible
 
-    selected_rows = []
-    for _, candidate in ranked.iterrows():
-        candidate_chokes = np.array(
-            [
-                float(candidate["actions"][label]["choke"])
-                if candidate["actions"][label]["on"]
-                else 0.0
-                for label in PRODUCERS
-            ]
-        )
-        is_diverse = all(
-            np.abs(
-                candidate_chokes
-                - np.array(
-                    [
-                        float(selected["actions"][label]["choke"])
-                        if selected["actions"][label]["on"]
-                        else 0.0
-                        for label in PRODUCERS
-                    ]
-                )
-            ).sum()
-            >= 20
-            for selected in selected_rows
-        )
-        if is_diverse:
-            selected_rows.append(candidate)
-        if len(selected_rows) == top_n:
-            break
+    strategies: list[pd.Series] = []
 
-    return pd.DataFrame(selected_rows).reset_index(drop=True)
+    maximum = _select_with_oil_tolerance(feasible)
+    if maximum is not None:
+        maximum = maximum.copy()
+        maximum["strategy_id"] = "maximum_output"
+        maximum["strategy_name"] = "Maximum output"
+        maximum["strategy_note"] = ""
+        strategies.append(maximum)
+
+    rest_well, run_days, relative_pressure = _rest_candidate(daily, as_of_date)
+    if rest_well is not None:
+        rest_options = feasible[
+            feasible["actions"].map(lambda actions: not actions[rest_well]["on"])
+        ]
+        rest = _select_with_oil_tolerance(rest_options)
+        if rest is not None:
+            rest = rest.copy()
+            rest["strategy_id"] = "rest_recover"
+            rest["strategy_name"] = f"Rest {rest_well}"
+            rest["strategy_note"] = (
+                f"Weakest relative pressure signal · {run_days}-day run · future rebound not modeled."
+            )
+            rest["rest_well"] = rest_well
+            rest["rest_pressure_percentile"] = relative_pressure
+            strategies.append(rest)
+
+    moderate_options = feasible[
+        feasible["actions"].map(lambda actions: _uses_moderate_chokes(actions, support))
+    ]
+    moderate = _select_with_oil_tolerance(moderate_options)
+    if moderate is not None:
+        moderate = moderate.copy()
+        moderate["strategy_id"] = "moderate_chokes"
+        moderate["strategy_name"] = "Moderate chokes"
+        moderate["strategy_note"] = "Active wells capped at their historical median choke."
+        strategies.append(moderate)
+
+    return pd.DataFrame(strategies[:top_n]).reset_index(drop=True)
 
 
 def constraint_violations(
