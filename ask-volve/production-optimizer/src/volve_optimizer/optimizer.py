@@ -188,15 +188,6 @@ def _rest_candidate(
     return label, run_days, relative_pressure
 
 
-def _uses_moderate_chokes(actions: dict[str, dict[str, Any]], support: pd.DataFrame) -> bool:
-    return all(
-        not action["on"]
-        or label not in support.index
-        or float(action["choke"]) <= float(support.loc[label, "median"]) + 0.1
-        for label, action in actions.items()
-    )
-
-
 def optimize_scenarios(
     bundle: ModelBundle,
     daily: pd.DataFrame,
@@ -297,17 +288,6 @@ def optimize_scenarios(
             rest["rest_well"] = rest_well
             rest["rest_pressure_percentile"] = relative_pressure
             strategies.append(rest)
-
-    moderate_options = feasible[
-        feasible["actions"].map(lambda actions: _uses_moderate_chokes(actions, support))
-    ]
-    moderate = _select_with_oil_tolerance(moderate_options)
-    if moderate is not None:
-        moderate = moderate.copy()
-        moderate["strategy_id"] = "moderate_chokes"
-        moderate["strategy_name"] = "Moderate chokes"
-        moderate["strategy_note"] = "Active wells capped at their historical median choke."
-        strategies.append(moderate)
 
     return pd.DataFrame(strategies[:top_n]).reset_index(drop=True)
 

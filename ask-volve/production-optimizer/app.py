@@ -302,7 +302,7 @@ recommendation_signature = (
 if st.session_state.get("recommendation_signature") != recommendation_signature:
     with st.spinner("Calculating ranked plans…"):
         st.session_state["recommendations"] = optimize_scenarios(
-            bundle, daily, as_of, support, constraints, top_n=3
+            bundle, daily, as_of, support, constraints, top_n=2
         )
     st.session_state["recommendation_signature"] = recommendation_signature
 
@@ -384,9 +384,9 @@ with overview_left:
     feedback_verdict = st.radio(
         "Model feedback",
         options=[
+            "Possible",
+            "Not possible",
             "Plausible",
-            "Not physically possible",
-            "Possible under other conditions",
         ],
         horizontal=True,
         label_visibility="collapsed",
@@ -414,7 +414,7 @@ with overview_right:
     st.markdown(
         '<div class="overview-title">Suggested strategies '
         '<span class="info-icon" tabindex="0" aria-label="Strategy selection method" '
-        'title="Maximum output uses gas to choose among plans within 1% of the highest predicted oil. The other cards explore a one-day rest and historically moderate choke settings.">i</span>'
+        'title="Maximum output uses gas to choose among plans within 1% of the highest predicted oil. The other card explores a one-day rest for the leading pressure-recovery candidate.">i</span>'
         '</div>',
         unsafe_allow_html=True,
     )

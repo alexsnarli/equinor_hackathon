@@ -11,8 +11,8 @@ historically supported alternatives that maximize oil, using gas as the tie-brea
 - Predicts next-day 24-hour oil, gas, water and wellhead-pressure proxy values.
 - Lets engineers toggle wells and choose continuous choke settings.
 - Compares every proposal with the forecast from keeping yesterday's settings.
-- Searches discrete, historically supported choke levels and returns three distinct strategies:
-  maximum output, rest and recover, and moderate historical choke settings.
+- Searches discrete, historically supported choke levels and returns two distinct strategies:
+  maximum output and rest and recover.
 - Saves engineer plausibility feedback, optional notes and complete scenario context to
   `data/model_feedback.csv`.
 
