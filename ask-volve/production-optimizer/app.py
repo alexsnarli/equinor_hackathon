@@ -114,7 +114,21 @@ st.markdown(
       .plan-name { color: var(--ink); font-size: .95rem; font-weight: 700; margin: .15rem 0; }
       .plan-settings { color: var(--muted); font-size: .73rem; line-height: 1.35; }
       .plan-uplift { color: #285742; font-size: .8rem; font-weight: 650; margin-top: .35rem; }
+      .plan-note { color: var(--muted); font-size: .75rem; line-height: 1.35; margin-top: .3rem; }
       .feedback-title { color: var(--ink); font-size: .92rem; font-weight: 700; margin-top: .5rem; }
+      .limitations {
+        background: var(--soft);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        color: var(--muted);
+        font-size: .82rem;
+        line-height: 1.5;
+        margin-top: 1.5rem;
+        padding: 1rem 1.2rem;
+      }
+      .limitations strong { color: var(--ink); }
+      .limitations ul { margin: .55rem 0 0; padding-left: 1.15rem; }
+      .limitations li { margin: .25rem 0; }
       div[data-testid="stMetric"] {
         background: var(--soft);
         border: 0;
@@ -409,9 +423,9 @@ with overview_left:
 
 with overview_right:
     st.markdown(
-        '<div class="overview-title">Ranked suggestions '
-        '<span class="info-icon" tabindex="0" aria-label="Ranking method" '
-        'title="Plans are ranked by maximum predicted oil. Predicted gas breaks ties.">i</span>'
+        '<div class="overview-title">Suggested strategies '
+        '<span class="info-icon" tabindex="0" aria-label="Strategy selection method" '
+        'title="Maximum production uses gas to choose among plans within 1% of the highest predicted oil. The other cards explore pressure recovery and lower choke strain.">i</span>'
         '</div>',
         unsafe_allow_html=True,
     )
@@ -422,23 +436,29 @@ with overview_right:
         st.markdown(
             f"""
             <div class="recommendation-headline">
-              <span>Recommended opportunity</span>
+              <span>Maximum-output opportunity</span>
               <strong>{output_delta(best['oil'], baseline_totals['oil'])} oil</strong>
               <small>{output_delta(best['gas'], baseline_totals['gas'])} gas compared with keeping yesterday's settings</small>
             </div>
             """,
             unsafe_allow_html=True,
         )
-        plan_names = ["Recommended plan", "Alternative 1", "Alternative 2"]
+        strategy_labels = {
+            "maximum_output": "MAX OUTPUT",
+            "rest_recover": "PRESSURE RECOVERY",
+            "lower_strain": "LOWER STRAIN",
+        }
         for index, recommendation in recommendations.iterrows():
+            strategy_name = str(recommendation["strategy_name"])
             with st.container(border=True):
                 plan_copy, plan_action = st.columns([3, 1], vertical_alignment="center")
                 plan_copy.markdown(
                     f"""
-                    <div class="plan-rank">#{index + 1}</div>
-                    <div class="plan-name">{plan_names[index]}</div>
+                    <div class="plan-rank">{strategy_labels.get(recommendation['strategy_id'], 'OPTION')}</div>
+                    <div class="plan-name">{strategy_name}</div>
                     <div class="plan-settings">{recommendation['configuration']}</div>
                     <div class="plan-uplift">Oil {recommendation['oil']:,.0f} ({output_delta(recommendation['oil'], baseline_totals['oil'])}) · Gas {recommendation['gas']:,.0f} ({output_delta(recommendation['gas'], baseline_totals['gas'])})</div>
+                    <div class="plan-note">{recommendation['strategy_note']}</div>
                     """,
                     unsafe_allow_html=True,
                 )
@@ -446,10 +466,10 @@ with overview_right:
                     "Preview",
                     key=f"preview_plan_{index}",
                     on_click=load_plan,
-                    args=(recommendation["actions"], plan_names[index]),
+                    args=(recommendation["actions"], strategy_name),
                     width="stretch",
                 )
-        st.caption("Oil is maximized first. Gas breaks ties. No downstream limits are applied in this demo.")
+        st.caption("Three different operating strategies—not three near-identical numerical winners.")
 
 st.divider()
 st.markdown(
@@ -553,3 +573,20 @@ with st.expander("Technical details", expanded=False):
         width="stretch",
         hide_index=True,
     )
+
+st.markdown(
+    """
+    <div class="limitations">
+      <strong>Prototype constraints — use for scenario discussion, not operating instructions</strong>
+      <ul>
+        <li>Compare relative options; absolute forecasts are not validated against a physical network model.</li>
+        <li>Shared pressure is represented by historical well and platform pressure proxies, not separator or manifold hydraulics.</li>
+        <li>The rest plan estimates production during the shut-in day; it does not estimate pressure recovery or the later rebound.</li>
+        <li>Daily data cannot represent explosive starts, ramping or minute-to-minute control response.</li>
+        <li>No downstream capacity, safety or operating constraints are applied in this demo.</li>
+        <li>Settings outside historical operating patterns are less reliable and always require engineer review.</li>
+      </ul>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)

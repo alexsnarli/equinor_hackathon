@@ -11,8 +11,8 @@ historically supported alternatives that maximize oil, using gas as the tie-brea
 - Predicts next-day 24-hour oil, gas, water and wellhead-pressure proxy values.
 - Lets engineers toggle wells and choose continuous choke settings.
 - Compares every proposal with the forecast from keeping yesterday's settings.
-- Searches discrete, historically supported choke levels and returns three ranked configurations:
-  maximize oil, then use gas to break ties.
+- Searches discrete, historically supported choke levels and returns three distinct strategies:
+  maximum output, rest and recover, and lower-strain production.
 - Saves engineer plausibility feedback, optional notes and complete scenario context to
   `data/model_feedback.csv`.
 
@@ -57,3 +57,8 @@ operationally valid.
   uplift until validated through an operational trial or a trusted physical simulator.
 - No downstream capacity or safety constraints are applied in the hackathon demo.
 - Daily data cannot represent minute-scale startup transients.
+
+## Next iteration
+
+- Add an expandable **Show more rest-and-recover suggestions** action that compares additional rest
+  candidates and clearly separates the predicted shut-in-day cost from any unmodeled future rebound.
