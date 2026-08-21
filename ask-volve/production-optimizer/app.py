@@ -14,14 +14,14 @@ from volve_optimizer.data import (  # noqa: E402
     PRODUCERS,
     build_model_frame,
     choke_support,
-    facility_defaults,
     historical_actions,
+    historical_production,
     load_daily_data,
     resolve_data_path,
 )
+from volve_optimizer.feedback import save_scenario_feedback  # noqa: E402
 from volve_optimizer.model import train_model  # noqa: E402
 from volve_optimizer.optimizer import (  # noqa: E402
-    constraint_violations,
     optimize_scenarios,
     simulate_scenario,
 )
@@ -64,6 +64,28 @@ st.markdown(
       .well-card-title span { color: var(--muted); display: block; font-size: .72rem; margin-top: .2rem; }
       .well-state { color: var(--muted); font-size: .75rem; margin-top: -.35rem; }
       .overview-title { margin: 0 0 .85rem; font-size: 1.1rem; font-weight: 750; }
+      .info-icon {
+        align-items: center;
+        border: 1px solid #9aa5b1;
+        border-radius: 50%;
+        color: var(--muted);
+        cursor: help;
+        display: inline-flex;
+        font-size: .68rem;
+        font-weight: 750;
+        height: 1.15rem;
+        justify-content: center;
+        margin-left: .3rem;
+        vertical-align: .08rem;
+        width: 1.15rem;
+      }
+      .measured-card {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 1rem 1.2rem;
+        margin-bottom: .75rem;
+      }
       .current-plan-card {
         background: var(--soft);
         border: 1px solid var(--line);
@@ -72,12 +94,12 @@ st.markdown(
         margin-bottom: .75rem;
       }
       .preview-label { color: #386451; font-size: .76rem; font-weight: 750; text-transform: uppercase; letter-spacing: .04em; }
-      .current-plan-card h2 { margin: .3rem 0 1rem; font-size: 1.2rem; }
-      .key-values { display: grid; grid-template-columns: 1.35fr 1fr; gap: 1.25rem; }
+      .measured-card h2, .current-plan-card h2 { margin: .3rem 0 .9rem; font-size: 1.15rem; }
+      .output-grid { display: grid; grid-template-columns: 1fr 1.2fr .85fr; gap: 1rem; }
       .key-value span { color: var(--muted); display: block; font-size: .76rem; font-weight: 650; }
-      .key-value strong { color: var(--ink); display: block; font-size: 1.8rem; line-height: 1.2; margin-top: .25rem; font-variant-numeric: tabular-nums; }
+      .key-value strong { color: var(--ink); display: block; font-size: 1.45rem; line-height: 1.2; margin-top: .25rem; font-variant-numeric: tabular-nums; }
       .key-value small { color: var(--muted); font-size: .78rem; }
-      .support-output { color: var(--muted); border-top: 1px solid var(--line); font-size: .84rem; margin-top: 1rem; padding-top: .75rem; }
+      .source-note { color: var(--muted); font-size: .78rem; margin-top: .75rem; }
       .recommendation-headline {
         background: var(--soft-green);
         border: 1px solid #d7e9e1;
@@ -86,17 +108,13 @@ st.markdown(
         margin-bottom: .75rem;
       }
       .recommendation-headline span { color: #386451; font-size: .76rem; font-weight: 750; text-transform: uppercase; }
-      .recommendation-headline strong { color: var(--ink); display: block; font-size: 1.5rem; margin: .25rem 0; }
+      .recommendation-headline strong { color: var(--ink); display: block; font-size: 1.35rem; margin: .25rem 0; }
       .recommendation-headline small { color: var(--muted); font-size: .82rem; }
       .plan-rank { color: var(--accent); font-size: .74rem; font-weight: 750; text-transform: uppercase; }
       .plan-name { color: var(--ink); font-size: .95rem; font-weight: 700; margin: .15rem 0; }
       .plan-settings { color: var(--muted); font-size: .73rem; line-height: 1.35; }
       .plan-uplift { color: #285742; font-size: .8rem; font-weight: 650; margin-top: .35rem; }
-      .status-ok {
-        color: #285742;
-        font-size: .85rem;
-        padding: .2rem 0;
-      }
+      .feedback-title { color: var(--ink); font-size: .92rem; font-weight: 700; margin-top: .5rem; }
       div[data-testid="stMetric"] {
         background: var(--soft);
         border: 0;
@@ -149,7 +167,7 @@ st.markdown(
       [data-testid="stDataFrame"] { font-variant-numeric: tabular-nums; }
       @media (max-width: 800px) {
         .block-container { padding: 1rem; }
-        .key-values { grid-template-columns: 1fr; gap: .75rem; }
+        .output-grid { grid-template-columns: 1fr 1fr; gap: .75rem; }
       }
     </style>
     """,
@@ -169,43 +187,52 @@ def build_model(path: str):
     return train_model(frame)
 
 
-def percent_delta(candidate: float, baseline: float) -> str:
-    if baseline <= 0:
-        return "n/a"
-    return f"{100 * (candidate - baseline) / baseline:+.1f}%"
-
-
-def estimated_daily_value(totals: dict[str, float]) -> float:
-    return (
-        totals["oil"] * st.session_state["value_oil_usd_sm3"]
-        + totals["gas"] * st.session_state["value_gas_usd_sm3"]
-        - totals["water"] * st.session_state["cost_water_usd_sm3"]
-    )
-
-
-def format_usd(value: float) -> str:
-    sign = "-" if value < 0 else ""
-    magnitude = abs(value)
-    if magnitude >= 1_000_000:
-        return f"{sign}${magnitude / 1_000_000:.2f}M"
-    if magnitude >= 1_000:
-        return f"{sign}${magnitude / 1_000:.0f}k"
-    return f"{sign}${magnitude:,.0f}"
+def output_delta(candidate: float, baseline: float, unit: str = "Sm³/day") -> str:
+    return f"{candidate - baseline:+,.0f} {unit}"
 
 
 def load_plan(actions: dict[str, dict[str, float | bool]], source: str) -> None:
+    st.session_state["plan_chokes"] = {
+        label: int(round(float(actions[label]["choke"]))) for label in PRODUCERS
+    }
     for label in PRODUCERS:
         st.session_state[f"enabled_{label}"] = bool(actions[label]["on"])
         st.session_state[f"choke_{label}"] = int(round(float(actions[label]["choke"])))
     st.session_state["preview_source"] = source
+    st.session_state["feedback_confirmation"] = None
     st.session_state["selected_well"] = next(
         (label for label in PRODUCERS if actions[label]["on"]),
         next(iter(PRODUCERS)),
     )
 
 
-def mark_custom_plan() -> None:
+def mark_custom_plan(choke_label: str | None = None) -> None:
+    if choke_label is not None:
+        st.session_state["plan_chokes"][choke_label] = int(
+            st.session_state[f"choke_{choke_label}"]
+        )
     st.session_state["preview_source"] = "Custom settings"
+    st.session_state["feedback_confirmation"] = None
+
+
+def record_feedback(
+    verdict: str,
+    state_date: pd.Timestamp,
+    scenario_name: str,
+    actions: dict[str, dict[str, float | bool]],
+    totals: dict[str, float],
+) -> None:
+    save_scenario_feedback(
+        APP_DIR / "data" / "model_feedback.csv",
+        state_date=state_date.date().isoformat(),
+        scenario_name=scenario_name,
+        verdict=verdict,
+        comment=st.session_state.get("feedback_comment", ""),
+        totals=totals,
+        actions=actions,
+    )
+    st.session_state["feedback_confirmation"] = f"Saved: {verdict}"
+    st.session_state["feedback_comment"] = ""
 
 
 try:
@@ -221,7 +248,6 @@ except FileNotFoundError as error:
 daily = load_source(str(workbook_path))
 bundle = build_model(str(workbook_path))
 support = choke_support(daily)
-defaults = facility_defaults(daily)
 
 min_date = daily["DATEPRD"].min().date()
 max_date = (daily["DATEPRD"].max() - pd.Timedelta(days=1)).date()
@@ -230,14 +256,7 @@ default_date = min(max(preferred_date, min_date), max_date)
 
 state_defaults = {
     "demo_as_of": default_date,
-    "limit_max_gas": round(defaults["max_gas"], -3),
-    "limit_max_water": round(defaults["max_water"], -2),
-    "limit_max_liquid": round(defaults["max_liquid"], -2),
-    "limit_use_pressure": False,
-    "limit_max_pressure": round(defaults["max_pressure"], 1),
-    "value_oil_usd_sm3": 500.0,
-    "value_gas_usd_sm3": 0.25,
-    "cost_water_usd_sm3": 5.0,
+    "feedback_comment": "",
 }
 for key, value in state_defaults.items():
     if key not in st.session_state:
@@ -245,21 +264,17 @@ for key, value in state_defaults.items():
 
 as_of = pd.Timestamp(st.session_state["demo_as_of"])
 constraints = {
-    "max_gas": st.session_state["limit_max_gas"],
-    "max_water": st.session_state["limit_max_water"],
-    "max_liquid": st.session_state["limit_max_liquid"],
-    "max_pressure": (
-        st.session_state["limit_max_pressure"]
-        if st.session_state["limit_use_pressure"]
-        else None
-    ),
+    "max_gas": None,
+    "max_water": None,
+    "max_liquid": None,
+    "max_pressure": None,
 }
 
 st.markdown(
     """
     <div class="app-header">
       <h1>Tomorrow's production plan</h1>
-      <p>Start with yesterday's configuration, compare ranked suggestions, then test your own.</p>
+      <p>Compare yesterday's production with tomorrow's options, then test your own settings.</p>
     </div>
     """,
     unsafe_allow_html=True,
@@ -267,21 +282,19 @@ st.markdown(
 
 baseline_actions = historical_actions(daily, as_of)
 _, baseline_totals = simulate_scenario(bundle, daily, as_of, baseline_actions)
+measured_totals = historical_production(daily, as_of)
 
 if (
-    st.session_state.get("planner_ui_version") != 2
+    st.session_state.get("planner_ui_version") != 3
     or st.session_state.get("well_state_date") != as_of.date()
 ):
-    load_plan(baseline_actions, "Yesterday's configuration")
+    load_plan(baseline_actions, "Keeping yesterday's settings")
     st.session_state["well_state_date"] = as_of.date()
-    st.session_state["planner_ui_version"] = 2
+    st.session_state["planner_ui_version"] = 3
 
 recommendation_signature = (
     as_of.date(),
-    constraints["max_gas"],
-    constraints["max_water"],
-    constraints["max_liquid"],
-    constraints["max_pressure"],
+    st.session_state["planner_ui_version"],
 )
 if st.session_state.get("recommendation_signature") != recommendation_signature:
     with st.spinner("Calculating ranked plans…"):
@@ -293,77 +306,131 @@ if st.session_state.get("recommendation_signature") != recommendation_signature:
 actions = {
     label: {
         "on": bool(st.session_state[f"enabled_{label}"]),
-        "choke": float(st.session_state[f"choke_{label}"])
+        "choke": float(st.session_state["plan_chokes"][label])
         if st.session_state[f"enabled_{label}"]
         else 0.0,
     }
     for label in PRODUCERS
 }
 scenario_wells, scenario_totals = simulate_scenario(bundle, daily, as_of, actions)
-violations = constraint_violations(scenario_totals, constraints)
-baseline_value = estimated_daily_value(baseline_totals)
-scenario_value = estimated_daily_value(scenario_totals)
 recommendations = st.session_state["recommendations"]
 
 overview_left, overview_right = st.columns([.9, 1.1], gap="large")
 
 with overview_left:
-    st.markdown('<div class="overview-title">Current preview</div>', unsafe_allow_html=True)
+    st.markdown('<div class="overview-title">Starting point</div>', unsafe_allow_html=True)
     st.markdown(
         f"""
-        <div class="current-plan-card">
-          <div class="preview-label">Previewing</div>
-          <h2>{st.session_state.get('preview_source', 'Custom settings')}</h2>
-          <div class="key-values">
-            <div class="key-value">
-              <span>ESTIMATED DAILY VALUE</span>
-              <strong>{format_usd(scenario_value)}</strong>
-              <small>{format_usd(scenario_value - baseline_value)} vs measured yesterday</small>
-            </div>
+        <div class="measured-card">
+          <div class="preview-label">Yesterday · measured</div>
+          <h2>{as_of.strftime('%-d %B %Y')}</h2>
+          <div class="output-grid">
             <div class="key-value">
               <span>OIL</span>
-              <strong>{scenario_totals['oil']:,.0f}</strong>
-              <small>Sm³/day · {percent_delta(scenario_totals['oil'], baseline_totals['oil'])}</small>
+              <strong>{measured_totals['oil']:,.0f}</strong>
+              <small>Sm³/day</small>
             </div>
-          </div>
-          <div class="support-output">
-            Gas {scenario_totals['gas']:,.0f} Sm³/day · Water {scenario_totals['water']:,.0f} Sm³/day
+            <div class="key-value">
+              <span>GAS</span>
+              <strong>{measured_totals['gas']:,.0f}</strong>
+              <small>Sm³/day</small>
+            </div>
+            <div class="key-value">
+              <span>WATER</span>
+              <strong>{measured_totals['water']:,.0f}</strong>
+              <small>Sm³/day</small>
+            </div>
           </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
-    if violations:
-        st.error("Outside facility limits: " + "; ".join(violations))
-    else:
-        st.markdown('<div class="status-ok">Within the selected facility limits</div>', unsafe_allow_html=True)
-    st.button(
-        "Back to yesterday's configuration",
-        on_click=load_plan,
-        args=(baseline_actions, "Yesterday's configuration"),
+    st.markdown(
+        f"""
+        <div class="current-plan-card">
+          <div class="preview-label">Tomorrow · forecast preview</div>
+          <h2>{st.session_state.get('preview_source', 'Custom settings')}</h2>
+          <div class="output-grid">
+            <div class="key-value">
+              <span>OIL</span>
+              <strong>{scenario_totals['oil']:,.0f}</strong>
+              <small>{output_delta(scenario_totals['oil'], measured_totals['oil'])} vs yesterday</small>
+            </div>
+            <div class="key-value">
+              <span>GAS</span>
+              <strong>{scenario_totals['gas']:,.0f}</strong>
+              <small>{output_delta(scenario_totals['gas'], measured_totals['gas'])} vs yesterday</small>
+            </div>
+            <div class="key-value">
+              <span>WATER</span>
+              <strong>{scenario_totals['water']:,.0f}</strong>
+              <small>{output_delta(scenario_totals['water'], measured_totals['water'])} vs yesterday</small>
+            </div>
+          </div>
+          <div class="source-note">Predicted from the measured well state and the selected configuration.</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
-    st.caption("Value uses the assumptions under Advanced settings.")
+    st.button(
+        "Reset to yesterday's settings",
+        on_click=load_plan,
+        args=(baseline_actions, "Keeping yesterday's settings"),
+    )
+    st.markdown('<div class="feedback-title">Does this forecast look plausible?</div>', unsafe_allow_html=True)
+    feedback_verdict = st.radio(
+        "Model feedback",
+        options=[
+            "Plausible",
+            "Not physically possible",
+            "Possible under other conditions",
+        ],
+        horizontal=True,
+        label_visibility="collapsed",
+    )
+    st.text_input(
+        "Optional note",
+        key="feedback_comment",
+        placeholder="What should the model learn from this?",
+    )
+    st.button(
+        "Save feedback",
+        on_click=record_feedback,
+        args=(
+            feedback_verdict,
+            as_of,
+            st.session_state.get("preview_source", "Custom settings"),
+            actions,
+            scenario_totals,
+        ),
+    )
+    if st.session_state.get("feedback_confirmation"):
+        st.success(st.session_state["feedback_confirmation"])
 
 with overview_right:
-    st.markdown('<div class="overview-title">Ranked suggestions</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="overview-title">Ranked suggestions '
+        '<span class="info-icon" tabindex="0" aria-label="Ranking method" '
+        'title="Plans are ranked by maximum predicted oil. Predicted gas breaks ties.">i</span>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
     if recommendations.empty:
-        st.warning("No producing plan satisfies the selected limits.")
+        st.warning("No producing plan could be calculated for this date.")
     else:
         best = recommendations.iloc[0]
-        best_value = estimated_daily_value(best.to_dict())
         st.markdown(
             f"""
             <div class="recommendation-headline">
               <span>Recommended opportunity</span>
-              <strong>{format_usd(best_value - baseline_value)}/day</strong>
-              <small>{percent_delta(best['oil'], baseline_totals['oil'])} oil compared with yesterday</small>
+              <strong>{output_delta(best['oil'], baseline_totals['oil'])} oil</strong>
+              <small>{output_delta(best['gas'], baseline_totals['gas'])} gas compared with keeping yesterday's settings</small>
             </div>
             """,
             unsafe_allow_html=True,
         )
         plan_names = ["Recommended plan", "Alternative 1", "Alternative 2"]
         for index, recommendation in recommendations.iterrows():
-            recommendation_value = estimated_daily_value(recommendation.to_dict())
             with st.container(border=True):
                 plan_copy, plan_action = st.columns([3, 1], vertical_alignment="center")
                 plan_copy.markdown(
@@ -371,7 +438,7 @@ with overview_right:
                     <div class="plan-rank">#{index + 1}</div>
                     <div class="plan-name">{plan_names[index]}</div>
                     <div class="plan-settings">{recommendation['configuration']}</div>
-                    <div class="plan-uplift">{percent_delta(recommendation['oil'], baseline_totals['oil'])} oil · {format_usd(recommendation_value - baseline_value)}/day</div>
+                    <div class="plan-uplift">Oil {recommendation['oil']:,.0f} ({output_delta(recommendation['oil'], baseline_totals['oil'])}) · Gas {recommendation['gas']:,.0f} ({output_delta(recommendation['gas'], baseline_totals['gas'])})</div>
                     """,
                     unsafe_allow_html=True,
                 )
@@ -382,7 +449,7 @@ with overview_right:
                     args=(recommendation["actions"], plan_names[index]),
                     width="stretch",
                 )
-        st.caption("Ranked by oil, then gas, then lower water—within selected limits.")
+        st.caption("Oil is maximized first. Gas breaks ties. No downstream limits are applied in this demo.")
 
 st.divider()
 st.markdown(
@@ -421,6 +488,10 @@ with editor_right:
         format_func=lambda label: f"{label}  ·  {PRODUCERS[label]}",
     )
     selected_support = support.loc[selected_well] if selected_well in support.index else None
+    if f"choke_{selected_well}" not in st.session_state:
+        st.session_state[f"choke_{selected_well}"] = st.session_state["plan_chokes"][
+            selected_well
+        ]
     st.slider(
         "Choke opening",
         min_value=0,
@@ -430,6 +501,7 @@ with editor_right:
         key=f"choke_{selected_well}",
         disabled=not st.session_state[f"enabled_{selected_well}"],
         on_change=mark_custom_plan,
+        args=(selected_well,),
     )
     if not st.session_state[f"enabled_{selected_well}"]:
         st.caption("Turn this well on to adjust its choke.")
@@ -439,7 +511,7 @@ with editor_right:
 
 st.caption("Prototype prediction from historical Volve data; not validated for operations.")
 
-with st.expander("Advanced settings", expanded=False):
+with st.expander("Data settings", expanded=False):
     st.date_input(
         "Current state date",
         min_value=min_date,
@@ -447,41 +519,13 @@ with st.expander("Advanced settings", expanded=False):
         key="demo_as_of",
         help="Predictions use information available through this date.",
     )
-    setting_columns = st.columns(2)
-    setting_columns[0].number_input(
-        "Maximum gas (Sm³/day)", min_value=0.0, step=10_000.0, key="limit_max_gas"
-    )
-    setting_columns[1].number_input(
-        "Maximum water (Sm³/day)", min_value=0.0, step=100.0, key="limit_max_water"
-    )
-    setting_columns[0].number_input(
-        "Maximum liquid (Sm³/day)", min_value=0.0, step=100.0, key="limit_max_liquid"
-    )
-    setting_columns[1].checkbox("Use WHP proxy limit", key="limit_use_pressure")
-    setting_columns[1].number_input(
-        "Maximum WHP proxy",
-        min_value=0.0,
-        step=1.0,
-        key="limit_max_pressure",
-        disabled=not st.session_state["limit_use_pressure"],
-    )
-    st.divider()
-    st.markdown("**Estimated value assumptions (USD)**")
-    value_columns = st.columns(3)
-    value_columns[0].number_input(
-        "Oil value / Sm³", min_value=0.0, step=25.0, key="value_oil_usd_sm3"
-    )
-    value_columns[1].number_input(
-        "Gas value / Sm³", min_value=0.0, step=0.05, key="value_gas_usd_sm3"
-    )
-    value_columns[2].number_input(
-        "Water handling / Sm³", min_value=0.0, step=1.0, key="cost_water_usd_sm3"
-    )
 
 with st.expander("Technical details", expanded=False):
     st.markdown(
         '<div class="confidence-note"><strong>Prototype boundary:</strong> These are historically '
-        "calibrated estimates, not a validated physical network simulation.</div>",
+        "calibrated estimates, not a validated physical network simulation. The model uses each "
+        "well's pressure history, shared platform pressure summaries and the complete proposed "
+        "well configuration.</div>",
         unsafe_allow_html=True,
     )
     display_wells = scenario_wells[

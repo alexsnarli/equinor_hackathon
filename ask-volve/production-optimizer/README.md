@@ -1,17 +1,20 @@
 # Volve Production Scenario Advisor
 
 Local hackathon prototype for comparing proposed Volve well configurations and finding
-historically supported alternatives under facility constraints.
+historically supported alternatives that maximize oil, using gas as the tie-breaker.
 
 ## What it does
 
 - Uses all six wellbores with production history and maps them to `W1`–`W6`.
 - Trains on daily production data with chronological train, validation and test partitions.
+- Shows yesterday's measured oil, gas and water separately from tomorrow's forecast.
 - Predicts next-day 24-hour oil, gas, water and wellhead-pressure proxy values.
 - Lets engineers toggle wells and choose continuous choke settings.
-- Compares a proposal with the "do nothing" configuration from the selected date.
-- Searches discrete, historically supported choke levels and returns the three best feasible
-  configurations: maximize oil, then gas, then minimize water.
+- Compares every proposal with the forecast from keeping yesterday's settings.
+- Searches discrete, historically supported choke levels and returns three ranked configurations:
+  maximize oil, then use gas to break ties.
+- Saves engineer plausibility feedback, optional notes and complete scenario context to
+  `data/model_feedback.csv`.
 
 This is an advisory data model, not a physical network simulator or automatic control system.
 
@@ -39,26 +42,18 @@ python -m unittest discover -s ask-volve/production-optimizer/tests -v
 
 ## SME inputs to update
 
-The app currently offers historical 95th-percentile defaults and an optional maximum wellhead
-pressure proxy. Confirm these items before presenting the constraint logic as physically valid:
-
-Use [SME_INTERVIEW.md](SME_INTERVIEW.md) as the five-minute interview script.
-
-| Constraint | Exact tag | Unit | Limit | Hard or soft |
-|---|---|---|---|---|
-| Shared-line pressure | TBD | TBD | TBD | TBD |
-| Gas flow | TBD | Sm³/day | TBD | TBD |
-| Water flow | TBD | Sm³/day | TBD | TBD |
-| Total liquid flow | TBD | Sm³/day | TBD | TBD |
-
-Also confirm whether per-well phase volumes are measured or allocated and whether opening one well
-materially changes other wells through common back pressure.
+Use [SME_INTERVIEW.md](SME_INTERVIEW.md) to confirm the shared-pressure signals, interaction logic,
+data quality and the meaning of each plausibility verdict before presenting the model as
+operationally valid.
 
 ## Modeling boundaries
 
 - A date represents the latest state known to the model; predictions are for the following day.
+- The model receives each well's pressure history, shared platform pressure summaries and the full
+  proposed configuration, allowing historical interactions between wells to influence predictions.
 - Manual sliders accept 0–100%, but the UI warns outside each well's typical historical range.
 - The optimizer uses each well's historical 25th, 50th and 75th-percentile choke settings plus off.
 - Estimated uplift compares two model predictions from the same state. It is not proven production
   uplift until validated through an operational trial or a trusted physical simulator.
+- No downstream capacity or safety constraints are applied in the hackathon demo.
 - Daily data cannot represent minute-scale startup transients.

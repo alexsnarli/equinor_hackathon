@@ -200,9 +200,7 @@ def optimize_scenarios(
         ]
     )
     feasible = summary[summary["feasible"] & summary["oil"].gt(0)]
-    ranked = feasible.sort_values(
-        ["oil", "gas", "water"], ascending=[False, False, True]
-    )
+    ranked = feasible.sort_values(["oil", "gas"], ascending=[False, False])
 
     selected_rows = []
     for _, candidate in ranked.iterrows():
