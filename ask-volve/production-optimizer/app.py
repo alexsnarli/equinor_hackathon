@@ -100,17 +100,6 @@ st.markdown(
       .key-value strong { color: var(--ink); display: block; font-size: 1.45rem; line-height: 1.2; margin-top: .25rem; font-variant-numeric: tabular-nums; }
       .key-value small { color: var(--muted); font-size: .78rem; }
       .source-note { color: var(--muted); font-size: .78rem; margin-top: .75rem; }
-      .recommendation-headline {
-        background: var(--soft-green);
-        border: 1px solid #d7e9e1;
-        border-radius: 12px;
-        padding: 1rem 1.1rem;
-        margin-bottom: .75rem;
-      }
-      .recommendation-headline span { color: #386451; font-size: .76rem; font-weight: 750; text-transform: uppercase; }
-      .recommendation-headline strong { color: var(--ink); display: block; font-size: 1.35rem; margin: .25rem 0; }
-      .recommendation-headline small { color: var(--muted); font-size: .82rem; }
-      .plan-rank { color: var(--accent); font-size: .74rem; font-weight: 750; text-transform: uppercase; }
       .plan-name { color: var(--ink); font-size: .95rem; font-weight: 700; margin: .15rem 0; }
       .plan-settings { color: var(--muted); font-size: .73rem; line-height: 1.35; }
       .plan-uplift { color: #285742; font-size: .8rem; font-weight: 650; margin-top: .35rem; }
@@ -425,40 +414,27 @@ with overview_right:
     st.markdown(
         '<div class="overview-title">Suggested strategies '
         '<span class="info-icon" tabindex="0" aria-label="Strategy selection method" '
-        'title="Maximum production uses gas to choose among plans within 1% of the highest predicted oil. The other cards explore pressure recovery and lower choke strain.">i</span>'
+        'title="Maximum output uses gas to choose among plans within 1% of the highest predicted oil. The other cards explore a one-day rest and historically moderate choke settings.">i</span>'
         '</div>',
         unsafe_allow_html=True,
     )
     if recommendations.empty:
         st.warning("No producing plan could be calculated for this date.")
     else:
-        best = recommendations.iloc[0]
-        st.markdown(
-            f"""
-            <div class="recommendation-headline">
-              <span>Maximum-output opportunity</span>
-              <strong>{output_delta(best['oil'], baseline_totals['oil'])} oil</strong>
-              <small>{output_delta(best['gas'], baseline_totals['gas'])} gas compared with keeping yesterday's settings</small>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        strategy_labels = {
-            "maximum_output": "MAX OUTPUT",
-            "rest_recover": "PRESSURE RECOVERY",
-            "lower_strain": "LOWER STRAIN",
-        }
         for index, recommendation in recommendations.iterrows():
             strategy_name = str(recommendation["strategy_name"])
+            strategy_note = str(recommendation["strategy_note"])
+            note_markup = (
+                f'<div class="plan-note">{strategy_note}</div>' if strategy_note else ""
+            )
             with st.container(border=True):
                 plan_copy, plan_action = st.columns([3, 1], vertical_alignment="center")
                 plan_copy.markdown(
                     f"""
-                    <div class="plan-rank">{strategy_labels.get(recommendation['strategy_id'], 'OPTION')}</div>
                     <div class="plan-name">{strategy_name}</div>
-                    <div class="plan-settings">{recommendation['configuration']}</div>
                     <div class="plan-uplift">Oil {recommendation['oil']:,.0f} ({output_delta(recommendation['oil'], baseline_totals['oil'])}) · Gas {recommendation['gas']:,.0f} ({output_delta(recommendation['gas'], baseline_totals['gas'])})</div>
-                    <div class="plan-note">{recommendation['strategy_note']}</div>
+                    <div class="plan-settings">{recommendation['configuration']}</div>
+                    {note_markup}
                     """,
                     unsafe_allow_html=True,
                 )
@@ -469,7 +445,6 @@ with overview_right:
                     args=(recommendation["actions"], strategy_name),
                     width="stretch",
                 )
-        st.caption("Three different operating strategies—not three near-identical numerical winners.")
 
 st.divider()
 st.markdown(

@@ -127,14 +127,14 @@ class VolveOptimizerTests(unittest.TestCase):
         )
         self.assertEqual(
             recommendations["strategy_id"].tolist(),
-            ["maximum_output", "rest_recover", "lower_strain"],
+            ["maximum_output", "rest_recover", "moderate_chokes"],
         )
         rest = recommendations[recommendations["strategy_id"].eq("rest_recover")].iloc[0]
         self.assertFalse(rest["actions"][rest["rest_well"]]["on"])
 
         support = choke_support(self.daily)
         moderate = recommendations[
-            recommendations["strategy_id"].eq("lower_strain")
+            recommendations["strategy_id"].eq("moderate_chokes")
         ].iloc[0]
         for label, action in moderate["actions"].items():
             if action["on"]:

@@ -277,10 +277,8 @@ def optimize_scenarios(
     if maximum is not None:
         maximum = maximum.copy()
         maximum["strategy_id"] = "maximum_output"
-        maximum["strategy_name"] = "Maximum production"
-        maximum["strategy_note"] = (
-            "Highest gas among plans within 1% of maximum predicted oil."
-        )
+        maximum["strategy_name"] = "Maximum output"
+        maximum["strategy_note"] = ""
         strategies.append(maximum)
 
     rest_well, run_days, relative_pressure = _rest_candidate(daily, as_of_date)
@@ -292,10 +290,9 @@ def optimize_scenarios(
         if rest is not None:
             rest = rest.copy()
             rest["strategy_id"] = "rest_recover"
-            rest["strategy_name"] = f"Rest {rest_well} and recover"
+            rest["strategy_name"] = f"Rest {rest_well}"
             rest["strategy_note"] = (
-                f"{rest_well} is the leading rest candidate from relative pressure and a "
-                f"{run_days}-day producing run. Future rebound is not estimated."
+                f"Weakest relative pressure signal · {run_days}-day run · future rebound not modeled."
             )
             rest["rest_well"] = rest_well
             rest["rest_pressure_percentile"] = relative_pressure
@@ -307,11 +304,9 @@ def optimize_scenarios(
     moderate = _select_with_oil_tolerance(moderate_options)
     if moderate is not None:
         moderate = moderate.copy()
-        moderate["strategy_id"] = "lower_strain"
-        moderate["strategy_name"] = "Lower-strain production"
-        moderate["strategy_note"] = (
-            "Keeps each active well at or below its historical median choke."
-        )
+        moderate["strategy_id"] = "moderate_chokes"
+        moderate["strategy_name"] = "Moderate chokes"
+        moderate["strategy_note"] = "Active wells capped at their historical median choke."
         strategies.append(moderate)
 
     return pd.DataFrame(strategies[:top_n]).reset_index(drop=True)
