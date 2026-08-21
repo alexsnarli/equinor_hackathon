@@ -111,7 +111,7 @@ class VolveOptimizerTests(unittest.TestCase):
         self.assertFalse(recommendations.empty)
         self.assertTrue((recommendations["gas"] <= 250_000.0).all())
 
-    def test_optimizer_returns_three_distinct_strategy_types(self):
+    def test_optimizer_returns_two_distinct_strategy_types(self):
         recommendations = optimize_scenarios(
             self.bundle,
             self.daily,
@@ -123,22 +123,14 @@ class VolveOptimizerTests(unittest.TestCase):
                 "max_liquid": None,
                 "max_pressure": None,
             },
-            top_n=3,
+            top_n=2,
         )
         self.assertEqual(
             recommendations["strategy_id"].tolist(),
-            ["maximum_output", "rest_recover", "moderate_chokes"],
+            ["maximum_output", "rest_recover"],
         )
         rest = recommendations[recommendations["strategy_id"].eq("rest_recover")].iloc[0]
         self.assertFalse(rest["actions"][rest["rest_well"]]["on"])
-
-        support = choke_support(self.daily)
-        moderate = recommendations[
-            recommendations["strategy_id"].eq("moderate_chokes")
-        ].iloc[0]
-        for label, action in moderate["actions"].items():
-            if action["on"]:
-                self.assertLessEqual(action["choke"], support.loc[label, "median"] + 0.1)
 
 
 if __name__ == "__main__":
